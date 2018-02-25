@@ -10,7 +10,9 @@ import android.graphics.SurfaceTexture;
 import android.hardware.Camera;
 import android.view.MotionEvent;
 import android.view.TextureView;
+import android.view.Surface;
 import android.os.AsyncTask;
+import android.util.Size;
 
 import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.ReactContext;
@@ -22,6 +24,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.EnumMap;
 import java.util.EnumSet;
+import java.io.File;
+import java.io.FileWriter;
 
 import com.google.zxing.BarcodeFormat;
 import com.google.zxing.BinaryBitmap;
@@ -31,6 +35,24 @@ import com.google.zxing.PlanarYUVLuminanceSource;
 import com.google.zxing.Result;
 import com.google.zxing.ResultPoint;
 import com.google.zxing.common.HybridBinarizer;
+
+/* KINESIS VIDEO IMPORTS */
+
+import static com.amazonaws.mobileconnectors.kinesisvideo.util.CameraUtils.getCameras;
+import static com.amazonaws.mobileconnectors.kinesisvideo.util.CameraUtils.getSupportedResolutions;
+import static com.amazonaws.mobileconnectors.kinesisvideo.util.VideoEncoderUtils.getSupportedMimeTypes;
+
+import com.amazonaws.kinesisvideo.common.exception.KinesisVideoException;
+import com.amazonaws.kinesisvideo.client.KinesisVideoClient;
+import com.amazonaws.kinesisvideo.client.mediasource.CameraMediaSourceConfiguration;
+import com.amazonaws.kinesisvideo.producer.StreamInfo;
+
+import com.amazonaws.mobileconnectors.kinesisvideo.client.KinesisVideoAndroidClientFactory;
+import com.amazonaws.mobileconnectors.kinesisvideo.mediasource.android.AndroidCameraMediaSource;
+import com.amazonaws.mobileconnectors.kinesisvideo.mediasource.android.AndroidCameraMediaSourceConfiguration;
+
+import com.amazonaws.auth.AWSCredentialsProvider;
+import com.amazonaws.auth.PropertiesFileCredentialsProvider;
 
 class RCTCameraViewFinder extends TextureView implements TextureView.SurfaceTextureListener, Camera.PreviewCallback {
     private int _cameraType;
@@ -42,6 +64,7 @@ class RCTCameraViewFinder extends TextureView implements TextureView.SurfaceText
     private boolean _isStopping;
     private Camera _camera;
     private float mFingerSpacing;
+    private Context _context;
 
     // concurrency lock for barcode scanner to avoid flooding the runtime
     public static volatile boolean barcodeScannerTaskLock = false;
@@ -51,6 +74,7 @@ class RCTCameraViewFinder extends TextureView implements TextureView.SurfaceText
 
     public RCTCameraViewFinder(Context context, int type) {
         super(context);
+        _context = context;
         this.setSurfaceTextureListener(this);
         this._cameraType = type;
         this.initBarcodeReader(RCTCamera.getInstance().getBarCodeTypes());
@@ -61,7 +85,11 @@ class RCTCameraViewFinder extends TextureView implements TextureView.SurfaceText
         _surfaceTexture = surface;
         _surfaceTextureWidth = width;
         _surfaceTextureHeight = height;
+
         startCamera();
+
+        // start streaming
+        createClientAndStartStreaming(surface);
     }
 
     @Override
@@ -76,6 +104,20 @@ class RCTCameraViewFinder extends TextureView implements TextureView.SurfaceText
         _surfaceTextureWidth = 0;
         _surfaceTextureHeight = 0;
         stopCamera();
+
+        // streaming cleanup
+
+        try {
+            if (mCameraMediaSource != null)
+                mCameraMediaSource.stop();
+            if (mKinesisVideoClient != null)
+                mKinesisVideoClient.stopAllMediaSources();
+            KinesisVideoAndroidClientFactory.freeKinesisVideoClient();
+        } catch (final KinesisVideoException e) {
+            android.util.Log.v("RCTCamera", "failed to release kinesis video client");
+            e.printStackTrace();
+        }
+
         return true;
     }
 
@@ -467,4 +509,105 @@ class RCTCameraViewFinder extends TextureView implements TextureView.SurfaceText
         float y = event.getY(0) - event.getY(1);
         return (float) Math.sqrt(x * x + y * y);
     }
+
+    /* STREAMING METHODS */
+
+    private KinesisVideoClient mKinesisVideoClient;
+    private String mStreamName;
+    private AndroidCameraMediaSourceConfiguration mConfiguration;
+    private AndroidCameraMediaSource mCameraMediaSource;
+    private AWSCredentialsProvider mCredentialsProvider;
+
+    private void createClientAndStartStreaming(final SurfaceTexture previewTexture) {
+        try {
+            String appPath = _context.getApplicationContext().getFilesDir().getAbsolutePath();
+
+            String credentialsFilePath = appPath+"/credentials.properties";
+            String credentials = "";
+
+            File credentialsFile = new File(credentialsFilePath);  // file path to save
+            FileWriter writer = new FileWriter(credentialsFile);
+
+            writer.append(credentials);
+            writer.flush();
+            writer.close();
+
+            mStreamName = "test-video-stream";
+
+            mCredentialsProvider = new PropertiesFileCredentialsProvider(credentialsFilePath);
+
+            mKinesisVideoClient = KinesisVideoAndroidClientFactory.createKinesisVideoClient(
+                    _context.getApplicationContext(),
+                    mCredentialsProvider);
+
+            mConfiguration = getCurrentConfiguration(mKinesisVideoClient);
+            mCameraMediaSource = (AndroidCameraMediaSource) mKinesisVideoClient
+                    .createMediaSource(mStreamName, mConfiguration);
+
+            mCameraMediaSource.setPreviewSurfaces(new Surface(previewTexture));
+
+            resumeStreaming();
+        } catch (final Exception e) {
+            android.util.Log.v("RCTCamera", "unable to start streaming");
+            throw new RuntimeException("unable to start streaming: " + e);
+        }
+    }
+
+    private void resumeStreaming() {
+        try {
+            if (mCameraMediaSource == null) {
+                return;
+            }
+
+            mCameraMediaSource.start();
+        } catch (final KinesisVideoException e) {
+            android.util.Log.v("RCTCamera", "unable to resume streaming");
+            throw new RuntimeException("unable to resume streaming: " + e);
+        }
+    }
+
+    private void pauseStreaming() {
+        try {
+            if (mCameraMediaSource == null) {
+                return;
+            }
+
+            mCameraMediaSource.stop();
+        } catch (final KinesisVideoException e) {
+            android.util.Log.v("RCTCamera", "unable to pause streaming");
+            throw new RuntimeException("unable to pause streaming: " + e);
+        }
+    }
+
+    private static final Size RESOLUTION_320x240 = new Size(320, 240);
+    private static final int FRAMERATE_20 = 20;
+    private static final int BITRATE_384_KBPS = 384 * 1024;
+    private static final int RETENTION_PERIOD_48_HOURS = 2 * 24;
+
+    private AndroidCameraMediaSourceConfiguration getCurrentConfiguration(KinesisVideoClient mKinesisVideoClient) {
+        CameraMediaSourceConfiguration currentCamera = getCameras(mKinesisVideoClient).get(0);
+        Size currentResolution = getSupportedResolutions(_context.getApplicationContext(), currentCamera.getCameraId()).get(0);
+
+        android.util.Log.v("===> NUMBER OF CAMERAS ", getCameras(mKinesisVideoClient).size()+"");
+        android.util.Log.v("===> CURRENT RESOLUTION ", currentResolution.toString());
+        android.util.Log.v("===> CURRENT MIME TYPE ", getSupportedMimeTypes().get(0).getMimeType());
+        android.util.Log.v("===> CHOSEN RESOLUTION ", _surfaceTextureWidth + "x" + _surfaceTextureHeight);
+        android.util.Log.v("===> SUPPORTED RESOLUTIONS ", getSupportedResolutions(_context.getApplicationContext(), currentCamera.getCameraId()).toString());
+
+        return new AndroidCameraMediaSourceConfiguration(
+                AndroidCameraMediaSourceConfiguration.builder()
+                        .withCameraId(currentCamera.getCameraId())
+                        .withEncodingMimeType(getSupportedMimeTypes().get(0).getMimeType())
+                        .withHorizontalResolution(RESOLUTION_320x240.getWidth())
+                        .withVerticalResolution(RESOLUTION_320x240.getHeight())
+                        .withCameraFacing(currentCamera.getCameraFacing())
+                        .withIsEncoderHardwareAccelerated(currentCamera.isEndcoderHardwareAccelerated())
+                        .withFrameRate(FRAMERATE_20)
+                        .withRetentionPeriodInHours(RETENTION_PERIOD_48_HOURS)
+                        .withEncodingBitRate(BITRATE_384_KBPS)
+                        .withCameraOrientation(-currentCamera.getCameraOrientation())
+                        .withNalAdaptationFlags(StreamInfo.NalAdaptationFlags.NAL_ADAPTATION_ANNEXB_CPD_AND_FRAME_NALS)
+                        .withIsAbsoluteTimecode(false));
+    }
+
 }
