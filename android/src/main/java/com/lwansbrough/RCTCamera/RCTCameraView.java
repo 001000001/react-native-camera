@@ -23,6 +23,9 @@ public class RCTCameraView extends ViewGroup {
     private String _captureQuality = "high";
     private int _torchMode = -1;
     private int _flashMode = -1;
+    private String _accessKeyId = "";
+    private String _secretKey = "";
+    private String _streamName = "";
 
     public RCTCameraView(Context context) {
         super(context);
@@ -75,6 +78,15 @@ public class RCTCameraView extends ViewGroup {
             }
             if (-1 != this._torchMode) {
                 _viewFinder.setTorchMode(this._torchMode);
+            }
+            if ("" != this._accessKeyId) {
+                _viewFinder.setAccessKeyId(this._accessKeyId);
+            }
+            if ("" != this._secretKey) {
+                _viewFinder.setSecretKey(this._secretKey);
+            }
+            if ("" != this._streamName) {
+                _viewFinder.setStreamName(this._streamName);
             }
             addView(_viewFinder);
         }
@@ -131,6 +143,27 @@ public class RCTCameraView extends ViewGroup {
             return true;
         } else {
             return false;
+        }
+    }
+
+    public void setAccessKeyId(String accessKeyId) {
+        this._accessKeyId = accessKeyId;
+        if (this._viewFinder != null) {
+            this._viewFinder.setAccessKeyId(accessKeyId);
+        }
+    }
+
+    public void setSecretKey(String secretKey) {
+        this._secretKey = secretKey;
+        if (this._viewFinder != null) {
+            this._viewFinder.setSecretKey(secretKey);
+        }
+    }
+
+    public void setStreamName(String streamName) {
+        this._streamName = streamName;
+        if (this._viewFinder != null) {
+            this._viewFinder.setStreamName(streamName);
         }
     }
 

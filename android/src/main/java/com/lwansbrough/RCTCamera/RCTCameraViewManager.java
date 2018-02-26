@@ -86,4 +86,20 @@ public class RCTCameraViewManager extends ViewGroupManager<RCTCameraView> {
         }
         view.setBarCodeTypes(result);
     }
+
+    @ReactProp(name = "accessKeyId")
+    public void setAccessKeyId(RCTCameraView view, String accessKeyId) {
+        view.setAccessKeyId(accessKeyId);
+    }
+
+    @ReactProp(name = "secretKey")
+    public void setSecretKey(RCTCameraView view, String secretKey) {
+        view.setSecretKey(secretKey);
+    }
+
+    @ReactProp(name = "streamName")
+    public void setStreamName(RCTCameraView view, String streamName) {
+        view.setStreamName(streamName);
+    }
+
 }

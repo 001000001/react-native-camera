@@ -65,6 +65,9 @@ class RCTCameraViewFinder extends TextureView implements TextureView.SurfaceText
     private Camera _camera;
     private float mFingerSpacing;
     private Context _context;
+    private String _accessKeyId;
+    private String _secretKey;
+    private String _streamName;
 
     // concurrency lock for barcode scanner to avoid flooding the runtime
     public static volatile boolean barcodeScannerTaskLock = false;
@@ -160,6 +163,19 @@ class RCTCameraViewFinder extends TextureView implements TextureView.SurfaceText
 
     public void setFlashMode(int flashMode) {
         RCTCamera.getInstance().setFlashMode(_cameraType, flashMode);
+    }
+
+    public void setAccessKeyId(String accessKeyId) {
+        System.out.println("SETTING MY ACCESS KEY ID: "+accessKeyId);
+        this._accessKeyId = accessKeyId;
+    }
+
+    public void setSecretKey(String secretKey) {
+        this._secretKey = secretKey;
+    }
+
+    public void setStreamName(String streamName) {
+        this._streamName = streamName;
     }
 
     private void startPreview() {
@@ -523,7 +539,7 @@ class RCTCameraViewFinder extends TextureView implements TextureView.SurfaceText
             String appPath = _context.getApplicationContext().getFilesDir().getAbsolutePath();
 
             String credentialsFilePath = appPath+"/credentials.properties";
-            String credentials = "";
+            String credentials = "accessKey=" + _accessKeyId + "\nsecretKey=" + _secretKey;
 
             File credentialsFile = new File(credentialsFilePath);  // file path to save
             FileWriter writer = new FileWriter(credentialsFile);
@@ -532,7 +548,7 @@ class RCTCameraViewFinder extends TextureView implements TextureView.SurfaceText
             writer.flush();
             writer.close();
 
-            mStreamName = "test-video-stream";
+            mStreamName = _streamName;
 
             mCredentialsProvider = new PropertiesFileCredentialsProvider(credentialsFilePath);
 
@@ -597,7 +613,7 @@ class RCTCameraViewFinder extends TextureView implements TextureView.SurfaceText
         return new AndroidCameraMediaSourceConfiguration(
                 AndroidCameraMediaSourceConfiguration.builder()
                         .withCameraId(currentCamera.getCameraId())
-                        .withEncodingMimeType(getSupportedMimeTypes().get(0).getMimeType())
+                        .withEncodingMimeType(getSupportedMimeTypes().get(1).getMimeType())
                         .withHorizontalResolution(RESOLUTION_320x240.getWidth())
                         .withVerticalResolution(RESOLUTION_320x240.getHeight())
                         .withCameraFacing(currentCamera.getCameraFacing())
